@@ -1,0 +1,42 @@
+name: can_astg_mobile
+description: Smart Weight System
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Tiện ích
+  cupertino_icons: ^1.0.6
+  intl: ^0.19.0
+  fluttertoast: ^8.2.4
+  google_fonts: ^6.1.0
+
+  # Logic & State
+  flutter_bloc: ^8.1.6
+  equatable: ^2.0.5
+
+  # Network & Data
+  dio: ^5.4.0
+  connectivity_plus: ^5.0.2
+  signalr_core: ^1.1.2       # [FIX] Phiên bản ổn định 
+  shared_preferences: ^2.2.2 
+  sqflite: ^2.3.0
+  path: ^1.9.0
+
+  # Camera (MediaKit)
+  media_kit: ^1.1.10
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.0.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
