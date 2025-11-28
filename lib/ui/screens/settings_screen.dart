@@ -41,22 +41,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  Future<void> _saveSettings() async {
+  // Trong settings_screen.dart
+Future<void> _saveSettings() async {
     await AppConfig.saveConfig(
       _apiController.text, 
       _cameraController.text,
       _currentMode
     );
     
-    // Khởi động lại kết nối SignalR
+    // Khởi động lại kết nối SignalR (Logic cũ)
     context.read<WeighingBloc>().add(InitSignalR());
-
+    
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã lưu cấu hình $_currentMode thành công!")));
-      Navigator.pop(context, true);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã lưu cấu hình thành công!")));
+      
+      // Quan trọng: Trả về true để HomeDashboard biết cần reload lại trạng thái nếu cần
+      Navigator.pop(context, true); 
     }
-  }
-
+}
   @override
   Widget build(BuildContext context) {
     return Scaffold(

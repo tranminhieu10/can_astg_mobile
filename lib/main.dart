@@ -6,7 +6,10 @@ import 'data/local/database_helper.dart';
 import 'data/services/api_service.dart';
 import 'data/repositories/weighing_repository.dart';
 import 'logic/blocs/weighing_bloc.dart';
-import 'ui/screens/dashboard_screen.dart';
+
+// --- IMPORT MÀN HÌNH MỚI ---
+import 'ui/screens/home_dashboard.dart'; 
+// import 'ui/screens/weighing_screen.dart'; // Không cần import ở đây nữa vì HomeDashboard sẽ gọi nó
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,13 +34,21 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ],
-      child: MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: 'Smart Weight',
-        theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: false),
-        home: BlocProvider(
-          create: (context) => WeighingBloc(context.read<WeighingRepository>()),
-          child: DashboardScreen(),
+      // --- BƯỚC QUAN TRỌNG: Bọc BlocProvider ở đây ---
+      // Để Bloc sống toàn cục, không bị mất khi chuyển màn hình
+      child: BlocProvider(
+        create: (context) => WeighingBloc(
+          context.read<WeighingRepository>()
+        ),
+        child: MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'Smart Weight',
+          theme: ThemeData(
+            primarySwatch: Colors.blue, 
+            useMaterial3: false
+          ),
+          // --- ĐỔI MÀN HÌNH CHÍNH VỀ DASHBOARD ---
+          home: HomeDashboard(), 
         ),
       ),
     );

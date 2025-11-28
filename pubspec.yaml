@@ -10,33 +10,40 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # UI & Tiện ích
-  cupertino_icons: ^1.0.6
+  # --- UI & Tiện ích ---
+  cupertino_icons: ^1.0.8        # Đã nâng cấp
   intl: ^0.19.0
-  fluttertoast: ^8.2.4
-  google_fonts: ^6.1.0
+  fluttertoast: ^8.2.10          # Đã nâng cấp (Sửa lỗi build Android)
+  google_fonts: ^6.2.1           # Đã nâng cấp
 
-  # Logic & State
+  # --- Logic & State ---
   flutter_bloc: ^8.1.6
   equatable: ^2.0.5
 
-  # Network & Data
-  dio: ^5.4.0
-  connectivity_plus: ^5.0.2
-  signalr_core: ^1.1.2       # [FIX] Phiên bản ổn định 
-  shared_preferences: ^2.2.2 
-  sqflite: ^2.3.0
+  # --- Network & Data ---
+  dio: ^5.7.0                    # Đã nâng cấp (Mạnh mẽ hơn)
+  connectivity_plus: ^6.0.3      # Đã nâng cấp (Hỗ trợ Android đời mới tốt hơn)
+  signalr_core: ^1.1.2           # Giữ nguyên (Vì thư viện này ít update)
+  shared_preferences: ^2.3.2     # Đã nâng cấp
+  sqflite: ^2.3.3                # Đã nâng cấp
   path: ^1.9.0
 
-  # Camera (MediaKit)
-  media_kit: ^1.1.10
-  media_kit_video: ^1.2.4
-  media_kit_libs_video: ^1.0.4
+  # --- Camera (MediaKit) ---
+  media_kit: ^1.1.11             # Đã nâng cấp
+  media_kit_video: ^1.2.5        # Đã nâng cấp
+  media_kit_libs_video: ^1.0.5   # Đã nâng cấp
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^4.0.0          # Đã nâng cấp chuẩn code mới
 
 flutter:
   uses-material-design: true
+
+# --- PHẦN QUAN TRỌNG NHẤT ---
+# Đây là "chìa khóa" để giải quyết xung đột version
+dependency_overrides:
+  # Ép hệ thống dùng phiên bản web socket mới để tương thích với Flutter mới
+  web_socket_channel: ^3.0.0 
+  web: ^1.0.0
