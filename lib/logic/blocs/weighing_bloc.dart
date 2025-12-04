@@ -216,6 +216,11 @@ class WeighingBloc extends Bloc<WeighingEvent, WeighingState> {
 
     emit(state.copyWith(isBusy: true));
     final double tareWeight = double.tryParse(state.weight) ?? 0;
+
+    if (tareWeight <= 0) {
+      emit(state.copyWith(isBusy: false, message: "Lỗi: Khối lượng bì = 0"));
+      return;
+    }
     
     final updatedTicket = state.phieuHienTai!.copyWith(
       tlBi: tareWeight,
@@ -231,9 +236,31 @@ class WeighingBloc extends Bloc<WeighingEvent, WeighingState> {
     ));
   }
 
-  Future<void> _onSaveTicket(SaveTicket event, Emitter<WeighingState> emit) async {
+  String? _validateBeforeSave() {
     final currentTicket = state.phieuHienTai;
-    if (currentTicket == null) return;
+    if (currentTicket == null) {
+      return "Không có phiếu để lưu.";
+    }
+    if (!state.canTongDone) {
+      return "Chưa chốt cân tổng.";
+    }
+    // Có thể bổ sung thêm validate khác (khách hàng, loại hàng, ...) ở đây sau này.
+    return null;
+  }
+
+  Future<void> _onSaveTicket(SaveTicket event, Emitter<WeighingState> emit) async {
+    // Validate phiếu trước khi lưu
+    final validationError = _validateBeforeSave();
+    if (validationError != null) {
+      emit(state.copyWith(message: validationError));
+      return;
+    }
+
+    final currentTicket = state.phieuHienTai;
+    if (currentTicket == null) {
+      emit(state.copyWith(message: "Không có phiếu để lưu."));
+      return;
+    }
 
     emit(state.copyWith(isBusy: true));
     try {
@@ -243,21 +270,27 @@ class WeighingBloc extends Bloc<WeighingEvent, WeighingState> {
       } else {
         result = await _repository.saveTicket(currentTicket);
       }
-      
-      if (_hubConnection?.state == HubConnectionState.connected) {
-         await _hubConnection?.invoke("NotifyDataChanged");
-         await _hubConnection?.invoke("SendBarrierCommand", args: ["OPEN"]);
+
+      final bool isError = result.startsWith("Lỗi");
+
+      if (!isError && _hubConnection?.state == HubConnectionState.connected) {
+        await _hubConnection?.invoke("NotifyDataChanged");
+        await _hubConnection?.invoke("SendBarrierCommand", args: ["OPEN"]);
       }
-      
-      emit(WeighingState(
-         weight: state.weight,
-         plate: state.plate,
-         phieuHienTai: null, 
-         message: "Thành công: $result",
-      ));
-      _lastCheckedPlate = ""; 
+
+      if (isError) {
+        emit(state.copyWith(isBusy: false, message: result));
+      } else {
+        emit(WeighingState(
+          weight: state.weight,
+          plate: state.plate,
+          phieuHienTai: null,
+          message: result,
+        ));
+        _lastCheckedPlate = "";
+      }
     } catch (e) {
-       emit(state.copyWith(isBusy: false, message: "Lỗi lưu: $e"));
+      emit(state.copyWith(isBusy: false, message: "Lỗi lưu: $e"));
     }
   }
 
