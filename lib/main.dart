@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:media_kit/media_kit.dart'; // Bắt buộc
+import 'package:media_kit/media_kit.dart'; 
 
 import 'data/local/database_helper.dart';
 import 'data/services/api_service.dart';
 import 'data/repositories/weighing_repository.dart';
 import 'logic/blocs/weighing_bloc.dart';
 
-// --- IMPORT MÀN HÌNH MỚI ---
-import 'ui/screens/home_dashboard.dart'; 
-// import 'ui/screens/weighing_screen.dart'; // Không cần import ở đây nữa vì HomeDashboard sẽ gọi nó
+// Đảm bảo import đúng đường dẫn 2 file cũ bạn đã có
+import 'ui/screens/home_dashboard.dart';
+import 'ui/screens/weighing_screen.dart';
+import 'ui/screens/history_screen.dart';
+// import 'ui/screens/search_screen.dart'; // Uncomment nếu bạn có file này
+// import 'ui/screens/settings_screen.dart'; // Uncomment nếu bạn có file này
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized(); // Khởi tạo thư viện Native
+  MediaKit.ensureInitialized(); 
   runApp(const MyApp());
 }
 
@@ -22,7 +25,6 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Khởi tạo Dependency Injection (DI)
     return MultiRepositoryProvider(
       providers: [
         RepositoryProvider(create: (_) => ApiService()),
@@ -34,8 +36,6 @@ class MyApp extends StatelessWidget {
           ),
         ),
       ],
-      // --- BƯỚC QUAN TRỌNG: Bọc BlocProvider ở đây ---
-      // Để Bloc sống toàn cục, không bị mất khi chuyển màn hình
       child: BlocProvider(
         create: (context) => WeighingBloc(
           context.read<WeighingRepository>()
@@ -47,8 +47,14 @@ class MyApp extends StatelessWidget {
             primarySwatch: Colors.blue, 
             useMaterial3: false
           ),
-          // --- ĐỔI MÀN HÌNH CHÍNH VỀ DASHBOARD ---
-          home: HomeDashboard(), 
+          initialRoute: '/',
+          routes: {
+            '/': (context) => HomeDashboard(),
+            '/weighing': (context) => WeighingScreen(),
+            '/history': (context) => HistoryScreen(),
+            // '/search': (context) => SearchScreen(),
+            // '/settings': (context) => SettingsScreen(),
+          },
         ),
       ),
     );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../data/services/config_service.dart';
+import '../../data/services/name_cache_service.dart';
 import '../../logic/blocs/weighing_bloc.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -11,7 +12,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final _apiController = TextEditingController();
   final _cameraController = TextEditingController();
-  String _currentMode = 'local'; // 'local' hoặc 'cloud'
+  String _currentMode = 'local';
   bool _isLoading = true;
 
   @override
@@ -27,7 +28,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _isLoading = false);
   }
 
-  // Hàm chuyển đổi chế độ nhanh
+  // Logic chuyển đổi nhanh của bạn
   void _switchMode(String mode) {
     setState(() {
       _currentMode = mode;
@@ -41,24 +42,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
-  // Trong settings_screen.dart
-Future<void> _saveSettings() async {
-    await AppConfig.saveConfig(
-      _apiController.text, 
-      _cameraController.text,
-      _currentMode
-    );
+  Future<void> _saveSettings() async {
+    await AppConfig.saveConfig(_apiController.text, _cameraController.text, _currentMode);
     
-    // Khởi động lại kết nối SignalR (Logic cũ)
+    // Reset Cache và SignalR khi đổi cấu hình
+    NameCacheService().clear();
     context.read<WeighingBloc>().add(InitSignalR());
     
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đã lưu cấu hình thành công!")));
-      
-      // Quan trọng: Trả về true để HomeDashboard biết cần reload lại trạng thái nếu cần
-      Navigator.pop(context, true); 
+      Navigator.pop(context, true);
     }
-}
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -73,7 +69,7 @@ Future<void> _saveSettings() async {
                 Text("CHỌN CHẾ ĐỘ HOẠT ĐỘNG:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
                 SizedBox(height: 10),
                 
-                // === THẺ CHỌN CHẾ ĐỘ ===
+                // === THẺ CHỌN CHẾ ĐỘ (UI Gốc) ===
                 Row(
                   children: [
                     Expanded(
@@ -137,13 +133,7 @@ Future<void> _saveSettings() async {
     );
   }
 
-  Widget _buildModeCard({
-    required String title, 
-    required IconData icon, 
-    required String mode, 
-    required Color color,
-    required String desc
-  }) {
+  Widget _buildModeCard({required String title, required IconData icon, required String mode, required Color color, required String desc}) {
     bool isSelected = _currentMode == mode;
     return GestureDetector(
       onTap: () => _switchMode(mode),
@@ -151,20 +141,14 @@ Future<void> _saveSettings() async {
         padding: EdgeInsets.all(15),
         decoration: BoxDecoration(
           color: isSelected ? color.withOpacity(0.1) : Colors.grey[200],
-          border: Border.all(
-            color: isSelected ? color : Colors.transparent, 
-            width: 2
-          ),
+          border: Border.all(color: isSelected ? color : Colors.transparent, width: 2),
           borderRadius: BorderRadius.circular(10)
         ),
         child: Column(
           children: [
             Icon(icon, size: 40, color: isSelected ? color : Colors.grey),
             SizedBox(height: 10),
-            Text(title, style: TextStyle(
-              fontWeight: FontWeight.bold, 
-              color: isSelected ? color : Colors.black87
-            )),
+            Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? color : Colors.black87)),
             SizedBox(height: 5),
             Text(desc, style: TextStyle(fontSize: 10, color: Colors.grey[600]), textAlign: TextAlign.center),
           ],

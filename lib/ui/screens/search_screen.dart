@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:intl/intl.dart';
+import '../../logic/blocs/weighing_bloc.dart';
 import '../../data/local/database_helper.dart';
 import '../../data/models/phieu_can_model.dart';
+import '../../data/services/name_cache_service.dart';
 
 class SearchScreen extends StatefulWidget {
   @override
@@ -8,18 +12,18 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+  final NameCacheService _nameCacheService = NameCacheService();
   final _controller = TextEditingController();
   List<PhieuCanModel> _allData = [];
   List<PhieuCanModel> _filteredData = [];
-  String _filterType = 'Biển số'; // Mặc định
+  String _filterType = 'Biển số';
+  bool _isSearching = false;
 
-  // Danh sách tiêu chí tìm kiếm
   final Map<String, String> _criteria = {
     'Biển số': 'bienSo',
-    'Số phiếu': 'id', // Hoặc soPhieu nếu có
-    'Khách hàng': 'khachHang',
-    'Loại hàng': 'loaiHang',
-    'Người cân': 'nguoiCan',
+    'Số phiếu': 'id',
+    'Khách hàng': 'maCongTyNhap', // Map với trường Mã trong Model mới
+    'Loại hàng': 'maLoai',        // Map với trường Mã
   };
 
   @override
@@ -30,32 +34,45 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _loadData() async {
     final list = await DatabaseHelper.instance.getAllPhieuCan();
-    setState(() {
-      _allData = list;
-      _filteredData = list;
-    });
+    if (mounted) {
+      setState(() {
+        _allData = list;
+        _filteredData = list;
+        // Chạy lại bộ lọc nếu có text sẵn
+        if (_controller.text.isNotEmpty) _search(_controller.text);
+      });
+    }
   }
 
   void _search(String query) {
     final lowerQuery = query.toLowerCase();
-    setState(() {
-      _filteredData = _allData.where((item) {
-        // Logic lọc dựa trên tiêu chí đang chọn
-        switch (_filterType) {
-          case 'Biển số': 
-            return item.bienSo.toLowerCase().contains(lowerQuery);
-          case 'Số phiếu': 
-            return item.id.toString().contains(lowerQuery);
-          case 'Khách hàng': 
-            return item.khachHang.toLowerCase().contains(lowerQuery);
-          case 'Loại hàng': 
-            return item.loaiHang.toLowerCase().contains(lowerQuery);
-          case 'Người cân': 
-            return item.nguoiCan.toLowerCase().contains(lowerQuery);
-          default: 
-            return item.bienSo.toLowerCase().contains(lowerQuery);
+    setState(() => _isSearching = true);
+
+    List<PhieuCanModel> results = [];
+
+    if (query.isEmpty) {
+      results = List.from(_allData);
+    } else {
+      results = _allData.where((item) {
+        if (_filterType == 'Biển số') return item.bienSo.toLowerCase().contains(lowerQuery);
+        if (_filterType == 'Số phiếu') return item.id.toString().contains(lowerQuery);
+        
+        // LOGIC MỚI: Tìm theo tên (Dùng cache dịch Mã -> Tên)
+        if (_filterType == 'Khách hàng') {
+          final ten = _nameCacheService.getTenKhachHang(item.maCongTyNhap).toLowerCase();
+          return ten.contains(lowerQuery);
         }
+        if (_filterType == 'Loại hàng') {
+          final ten = _nameCacheService.getTenHangHoa(item.maLoai).toLowerCase();
+          return ten.contains(lowerQuery);
+        }
+        return false;
       }).toList();
+    }
+
+    setState(() {
+      _filteredData = results;
+      _isSearching = false;
     });
   }
 
@@ -63,19 +80,14 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[100],
-      appBar: AppBar(
-        title: Text("Tra Cứu Thông Tin"),
-        backgroundColor: Colors.blue[800],
-      ),
+      appBar: AppBar(title: Text("Tra Cứu Thông Tin"), backgroundColor: Colors.blue[800]),
       body: Column(
         children: [
-          // === KHUNG TÌM KIẾM ===
           Container(
             padding: EdgeInsets.all(16),
             color: Colors.white,
             child: Column(
               children: [
-                // Thanh chọn tiêu chí (Horizontal Scroll nếu màn hình nhỏ)
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -88,10 +100,8 @@ class _SearchScreenState extends State<SearchScreen> {
                           selected: isSelected,
                           onSelected: (selected) {
                             if (selected) {
-                              setState(() {
-                                _filterType = key;
-                                _search(_controller.text); // Tìm kiếm lại ngay khi đổi tiêu chí
-                              });
+                              setState(() => _filterType = key);
+                              _search(_controller.text);
                             }
                           },
                           selectedColor: Colors.blue[100],
@@ -105,23 +115,15 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                 ),
                 SizedBox(height: 10),
-                // Ô nhập liệu
                 TextField(
                   controller: _controller,
                   decoration: InputDecoration(
-                    hintText: "Nhập ${_filterType.toLowerCase()} cần tìm...",
+                    hintText: "Nhập ${_filterType.toLowerCase()}...",
                     prefixIcon: Icon(Icons.search),
-                    filled: true,
-                    fillColor: Colors.grey[100],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
+                    filled: true, fillColor: Colors.grey[100],
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
                     suffixIcon: _controller.text.isNotEmpty 
-                      ? IconButton(icon: Icon(Icons.clear), onPressed: () {
-                          _controller.clear();
-                          _search('');
-                        }) 
+                      ? IconButton(icon: Icon(Icons.clear), onPressed: () { _controller.clear(); _search(''); }) 
                       : null
                   ),
                   onChanged: _search,
@@ -130,18 +132,15 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
           
-          // === DANH SÁCH KẾT QUẢ ===
           Expanded(
-            child: _filteredData.isEmpty 
-            ? Center(child: Text("Không tìm thấy kết quả nào", style: TextStyle(color: Colors.grey)))
-            : ListView.builder(
-              padding: EdgeInsets.all(12),
-              itemCount: _filteredData.length,
-              itemBuilder: (context, index) {
-                final item = _filteredData[index];
-                return _buildResultCard(item);
-              },
-            ),
+            child: _filteredData.isEmpty
+              ? Center(child: Text("Không tìm thấy kết quả nào", style: TextStyle(color: Colors.grey)))
+              : ListView.separated(
+                  padding: EdgeInsets.all(12),
+                  itemCount: _filteredData.length,
+                  separatorBuilder: (_, __) => SizedBox(height: 10),
+                  itemBuilder: (context, index) => _buildResultCard(_filteredData[index]),
+                ),
           ),
         ],
       ),
@@ -149,35 +148,32 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildResultCard(PhieuCanModel item) {
+    final displayTime = item.thoiGianCanTong ?? item.thoiGianCanBi;
+    final date = displayTime != null ? DateTime.tryParse(displayTime) : null;
+    final dateStr = date != null ? DateFormat('dd/MM/yyyy').format(date) : 'N/A';
+    
+    // Dùng NameCacheService
+    final tenKhach = _nameCacheService.getTenKhachHang(item.maCongTyNhap);
+    final tenHang = _nameCacheService.getTenHangHoa(item.maLoai);
+
     return Card(
       elevation: 2,
-      margin: EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      child: Padding(
-        padding: EdgeInsets.all(12),
-        child: Column(
+      child: ListTile(
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  "Phiếu #${item.id}", 
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600])
-                ),
-                Text(
-                  item.thoiGian.split('T')[0], // Chỉ lấy ngày
-                  style: TextStyle(fontSize: 12, color: Colors.grey)
-                ),
-              ],
-            ),
+            Text("Phiếu #${item.id}", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600], fontSize: 12)),
+            Text(dateStr, style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
             Divider(),
             Row(
               children: [
-                Container(
-                  padding: EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(8)),
-                  child: Icon(Icons.local_shipping, color: Colors.blue[800]),
-                ),
+                Icon(Icons.local_shipping, color: Colors.blue[800], size: 40),
                 SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -185,21 +181,14 @@ class _SearchScreenState extends State<SearchScreen> {
                     children: [
                       Text(item.bienSo, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       SizedBox(height: 4),
-                      Text("${item.khachHang} - ${item.loaiHang}", style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+                      Text("$tenKhach - $tenHang", style: TextStyle(color: Colors.grey[700], fontSize: 13)),
                     ],
                   ),
                 ),
-                Text(
-                  "${item.khoiLuongHang} Kg",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red[700]),
-                )
+                Text("${NumberFormat("#,###").format(item.tlHang)} Kg", 
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.red[700])),
               ],
             ),
-            SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: Text("Người cân: ${item.nguoiCan}", style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey)),
-            )
           ],
         ),
       ),

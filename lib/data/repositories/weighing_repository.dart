@@ -9,107 +9,71 @@ class WeighingRepository {
 
   WeighingRepository(this._api, this._db);
 
-  /// Kiểm tra kết nối mạng (Hỗ trợ connectivity_plus bản mới trả về List)
   Future<bool> _isConnected() async {
+    // [FIX LỖI ẢNH 2] Dùng cú pháp của bản 5.0.2 (So sánh trực tiếp, không dùng contains)
     final result = await Connectivity().checkConnectivity();
-    return !result.contains(ConnectivityResult.none);
+    return result != ConnectivityResult.none;
   }
 
-  /// ==========================================================
-  /// 1. LƯU PHIẾU (Logic Offline-First an toàn dữ liệu)
-  /// ==========================================================
+  Future<PhieuCanModel?> findLatestUnfinishedTicketByPlate(String bienSo) {
+    return _db.findLatestUnfinishedTicketByPlate(bienSo);
+  }
+
   Future<String> saveTicket(PhieuCanModel phieu) async {
     try {
-      // BƯỚC 1: Luôn INSERT vào SQLite trước với trạng thái chưa đồng bộ (isSynced = 0)
-      // Điều này đảm bảo nếu App bị crash hoặc mất mạng ngay sau đó, dữ liệu vẫn còn.
-      PhieuCanModel localPhieu = PhieuCanModel(
-        bienSo: phieu.bienSo,
-        khachHang: phieu.khachHang,       // Map đủ trường mới
-        loaiHang: phieu.loaiHang,
-        khoiLuongTong: phieu.khoiLuongTong,
-        khoiLuongBi: phieu.khoiLuongBi,
-        khoiLuongHang: phieu.khoiLuongHang,
-        thoiGian: phieu.thoiGian,
-        nguoiCan: phieu.nguoiCan,
-        ghiChu: phieu.ghiChu,
-        isSynced: 0, // Mặc định chưa đồng bộ
-      );
+      final localPhieu = phieu.copyWith(id: null, isSynced: 0);
+      final localId = await _db.insertPhieu(localPhieu);
 
-      // Lưu vào DB và lấy ID
-      int localId = await _db.insertPhieu(localPhieu);
-
-      // BƯỚC 2: Kiểm tra mạng. Nếu có mạng -> Gửi ngay lập tức
       if (await _isConnected()) {
-        bool success = await _api.postPhieuCan(localPhieu);
-        
+        final success = await _api.postPhieuCan(localPhieu.copyWith(id: localId));
         if (success) {
-          // BƯỚC 3: Nếu gửi thành công -> Update trạng thái Local thành "Đã Sync" (1)
           await _db.markAsSynced(localId);
-          return "Đã lưu và đồng bộ lên Server";
+          return "Đã lưu & Đồng bộ Azure";
         }
       }
-      
-      // Nếu không có mạng hoặc gửi lỗi -> Vẫn báo thành công (vì đã lưu Offline)
-      return "Đã lưu Offline (Sẽ tự động đồng bộ)";
+      return "Đã lưu Offline (Chờ mạng)";
     } catch (e) {
-      return "Lỗi lưu phiếu: $e";
+      return "Lỗi xử lý: $e";
     }
   }
 
-  /// ==========================================================
-  /// 2. ĐỒNG BỘ DỮ LIỆU 2 CHIỀU (Gửi đi & Tải về)
-  /// ==========================================================
-  Future<String> syncData() async {
-    if (!await _isConnected()) {
-      return "Không có kết nối mạng để đồng bộ";
-    }
-
-    int uploadCount = 0;
-    int downloadCount = 0;
-
+  Future<String> updateTicket(PhieuCanModel phieu) async {
     try {
-      // --- CHIỀU ĐI (UPLOAD): Gửi các phiếu Offline lên Server ---
-      var unsyncedList = await _db.getUnsyncedPhieu();
-      for (var item in unsyncedList) {
-        if (await _api.postPhieuCan(item)) {
-          // Gửi xong thì đánh dấu đã sync
-          await _db.markAsSynced(item.id!);
-          uploadCount++;
+      int rows = await _db.updatePhieu(phieu);
+      if (rows == 0) return "Không tìm thấy phiếu gốc";
+
+      if (await _isConnected()) {
+        bool success = await _api.postPhieuCan(phieu);
+        if (success) {
+          await _db.markAsSynced(phieu.id!);
+          return "Đã cập nhật & Đồng bộ Azure";
         }
       }
-
-      // --- CHIỀU VỀ (DOWNLOAD): Tải lịch sử từ Server về máy ---
-      var serverList = await _api.getPhieuCanHistory();
-      for (var serverItem in serverList) {
-        // Tạo đối tượng Sync (isSynced = 1)
-        var syncItem = PhieuCanModel(
-          // id: serverItem.id, // Bỏ qua ID server để SQLite tự sinh ID, tránh trùng lặp
-          soPhieu: serverItem.soPhieu,
-          bienSo: serverItem.bienSo,
-          khachHang: serverItem.khachHang,
-          loaiHang: serverItem.loaiHang,
-          khoiLuongTong: serverItem.khoiLuongTong,
-          khoiLuongBi: serverItem.khoiLuongBi,
-          khoiLuongHang: serverItem.khoiLuongHang,
-          thoiGian: serverItem.thoiGian,
-          nguoiCan: serverItem.nguoiCan,
-          ghiChu: serverItem.ghiChu,
-          isSynced: 1 // Đánh dấu đã đồng bộ
-        );
-
-        // Insert vào DB (DatabaseHelper cần cấu hình conflictAlgorithm: replace)
-        // Lưu ý: Logic này đơn giản là thêm mới. Nếu muốn tránh trùng lặp nâng cao, 
-        // bạn cần check xem soPhieu đã tồn tại chưa trước khi insert.
-        await _db.insertPhieu(syncItem);
-        downloadCount++;
-      }
-
-      return "Đồng bộ: Gửi $uploadCount phiếu, Tải về $downloadCount phiếu";
-    } catch (e) {
-      return "Lỗi quá trình đồng bộ: $e";
-    }
+      return "Đã cập nhật Offline";
+    } catch (e) { return "Lỗi cập nhật: $e"; }
   }
 
-  /// Điều khiển mở Barrier
+  Future<String> syncData() async {
+    if (!await _isConnected()) return "Không có mạng";
+
+    int up = 0, down = 0;
+    try {
+      var unsynced = await _db.getUnsyncedPhieu();
+      for (var item in unsynced) {
+        if (await _api.postPhieuCan(item)) {
+          await _db.markAsSynced(item.id!);
+          up++;
+        }
+      }
+      var serverData = await _api.getPhieuCanHistory();
+      for (var item in serverData) {
+        await _db.insertPhieu(item.copyWith(isSynced: 1, id: null)); 
+        down++;
+      }
+      return "Đồng bộ: Gửi $up, Nhận $down";
+    } catch (e) { return "Lỗi Sync: $e"; }
+  }
+
   Future<bool> openBarrier() => _api.controlBarrier("OPEN");
+  Future<void> deletePhieuCan(int id) => _db.deletePhieuCan(id);
 }

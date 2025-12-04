@@ -1,220 +1,290 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:signalr_core/signalr_core.dart';
-
 import '../../data/services/config_service.dart';
 import '../../data/repositories/weighing_repository.dart';
 import '../../data/models/phieu_can_model.dart';
 
-/// =========================================================
-/// 1. EVENTS: Các hành động từ giao diện gửi vào Bloc
-/// =========================================================
+// --- EVENTS ---
 abstract class WeighingEvent {}
 
-// Khởi động kết nối SignalR để nhận dữ liệu cân/biển số
 class InitSignalR extends WeighingEvent {}
 
-// Cập nhật dữ liệu Realtime lên màn hình (Internal Event)
 class UpdateRealtimeData extends WeighingEvent {
   final String? weight;
   final String? plate;
   UpdateRealtimeData({this.weight, this.plate});
 }
 
-// Người dùng nhấn nút "Lưu Phiếu Cân"
-class SubmitTicket extends WeighingEvent {
-  final String note;      // Ghi chú
-  final String khachHang; // Khách hàng
-  final String loaiHang;  // Loại hàng hóa
+class CheckForUnfinishedTicket extends WeighingEvent {
+  final String plate;
+  CheckForUnfinishedTicket(this.plate);
+}
 
-  SubmitTicket({
-    this.note = "",
-    this.khachHang = "Khách lẻ", 
-    this.loaiHang = "Hàng thường"
+class WeighGross extends WeighingEvent {
+  final String maCongTyNhap;
+  final String maCongTyBan;
+  final String maLoai;
+  final String note;
+
+  WeighGross({
+    required this.maCongTyNhap, 
+    required this.maCongTyBan, 
+    required this.maLoai, 
+    this.note = ""
   });
 }
 
-// Người dùng nhấn nút "Mở Barrier"
+class WeighTare extends WeighingEvent {}
+class SaveTicket extends WeighingEvent {}
+class ClearWeighing extends WeighingEvent {}
 class TriggerBarrier extends WeighingEvent {}
+class SyncDataEvent extends WeighingEvent {}
+class DeletePhieuCan extends WeighingEvent { 
+  final int id; 
+  DeletePhieuCan(this.id); 
+}
 
-// Sự kiện yêu cầu Đồng bộ (Khi vào màn hình Lịch sử hoặc Vuốt Refresh)
-class SyncDataEvent extends WeighingEvent {} 
-
-
-/// =========================================================
-/// 2. STATE: Trạng thái dữ liệu của màn hình
-/// =========================================================
+// --- STATE ---
 class WeighingState {
-  final String weight;  // Số cân hiện tại
-  final String plate;   // Biển số hiện tại
-  final String message; // Thông báo hiển thị (SnackBar)
-  final bool isBusy;    // Trạng thái đang xử lý (Loading)
+  final String weight;
+  final String plate;
+  final String message;
+  final bool isBusy;
+  final PhieuCanModel? phieuHienTai;
+  final bool canTongDone;
+  final bool canBiDone;
+  final bool isUpdating; 
 
   WeighingState({
     this.weight = "0",
     this.plate = "---",
     this.message = "",
     this.isBusy = false,
+    this.phieuHienTai,
+    this.canTongDone = false,
+    this.canBiDone = false,
+    this.isUpdating = false,
   });
 
-  // CopyWith giúp cập nhật state mà không làm mất dữ liệu cũ
   WeighingState copyWith({
     String? weight,
     String? plate,
     String? message,
     bool? isBusy,
+    PhieuCanModel? phieuHienTai, 
+    bool? canTongDone,
+    bool? canBiDone,
+    bool? isUpdating,
   }) {
     return WeighingState(
       weight: weight ?? this.weight,
       plate: plate ?? this.plate,
-      // Lưu ý: message mặc định reset về rỗng để không hiện lại thông báo cũ
-      message: message ?? "", 
+      message: message ?? "",
       isBusy: isBusy ?? this.isBusy,
+      phieuHienTai: phieuHienTai,
+      canTongDone: canTongDone ?? this.canTongDone,
+      canBiDone: canBiDone ?? this.canBiDone,
+      isUpdating: isUpdating ?? this.isUpdating,
     );
   }
 }
 
-
-/// =========================================================
-/// 3. BLOC: Logic xử lý trung tâm
-/// =========================================================
+// --- BLOC ---
 class WeighingBloc extends Bloc<WeighingEvent, WeighingState> {
   final WeighingRepository _repository;
   HubConnection? _hubConnection;
+  String _lastCheckedPlate = "";
 
-  WeighingBloc(this._repository) : super(WeighingState()) {
+  WeighingBloc(this._repository) : super(WeighingState(phieuHienTai: null)) {
     on<InitSignalR>(_onInitSignalR);
     on<UpdateRealtimeData>(_onUpdateRealtimeData);
-    on<SubmitTicket>(_onSubmitTicket);
+    on<CheckForUnfinishedTicket>(_onCheckForUnfinishedTicket);
+    on<WeighGross>(_onWeighGross);
+    on<WeighTare>(_onWeighTare);
+    on<SaveTicket>(_onSaveTicket);
+    on<ClearWeighing>(_onClearWeighing);
     on<TriggerBarrier>(_onTriggerBarrier);
     on<SyncDataEvent>(_onSyncData);
+    on<DeletePhieuCan>(_onDeletePhieuCan);
   }
 
-  /// ---------------------------------------------------
-  /// XỬ LÝ KẾT NỐI SIGNALR (REALTIME)
-  /// ---------------------------------------------------
   Future<void> _onInitSignalR(InitSignalR event, Emitter<WeighingState> emit) async {
     try {
       final baseUrl = await AppConfig.getApiUrl();
-      final hubUrl = "$baseUrl/weighthub"; 
-
-      // Ngắt kết nối cũ nếu có
+      // Loại bỏ đuôi /swagger nếu có, trỏ về hub
+      final cleanUrl = baseUrl.replaceAll('/swagger', '').replaceAll(RegExp(r'/$'), '');
+      final hubUrl = "$cleanUrl/weighthub"; 
+      
       if (_hubConnection?.state == HubConnectionState.connected) {
         await _hubConnection?.stop();
       }
 
-      // Cấu hình SignalR
       _hubConnection = HubConnectionBuilder()
           .withUrl(hubUrl)
-          .withAutomaticReconnect() // Tự động kết nối lại khi rớt mạng
+          .withAutomaticReconnect()
           .build();
 
-      // Lắng nghe sự kiện từ Server gửi về
       _hubConnection?.on("ReceiveWeight", (args) {
         if (args != null && args.isNotEmpty) {
-          add(UpdateRealtimeData(weight: args[0].toString()));
+           add(UpdateRealtimeData(weight: args[0].toString()));
         }
       });
 
       _hubConnection?.on("ReceiveLicensePlate", (args) {
         if (args != null && args.isNotEmpty) {
-          add(UpdateRealtimeData(plate: args[0].toString()));
+           add(UpdateRealtimeData(plate: args[0].toString()));
         }
       });
 
+      // Lắng nghe sự kiện DataChanged từ WPF/API gửi tới
+      _hubConnection?.on("DataChanged", (args) {
+          add(SyncDataEvent());
+      });
+
       await _hubConnection?.start();
-      print("✅ Kết nối SignalR thành công tới: $hubUrl");
-      
-    } catch (e) {
-      print("❌ Lỗi SignalR: $e");
-      // Không emit lỗi ra UI để tránh làm phiền, chỉ log console
+      print("✅ SignalR Connected: $hubUrl");
+
+    } catch (e) { 
+      print("❌ SignalR Error: $e"); 
     }
   }
 
-  /// ---------------------------------------------------
-  /// CẬP NHẬT GIAO DIỆN (UI)
-  /// ---------------------------------------------------
   void _onUpdateRealtimeData(UpdateRealtimeData event, Emitter<WeighingState> emit) {
-    emit(state.copyWith(
-      weight: event.weight ?? state.weight,
-      plate: event.plate ?? state.plate,
-    ));
+    String? newPlate = event.plate;
+    if (newPlate != null && newPlate.isNotEmpty && newPlate != "---" && newPlate != _lastCheckedPlate) {
+      _lastCheckedPlate = newPlate;
+      add(CheckForUnfinishedTicket(newPlate));
+    }
+    
+    emit(state.copyWith(weight: event.weight, plate: event.plate));
   }
 
-  /// ---------------------------------------------------
-  /// XỬ LÝ LƯU PHIẾU (QUAN TRỌNG NHẤT)
-  /// ---------------------------------------------------
-  Future<void> _onSubmitTicket(SubmitTicket event, Emitter<WeighingState> emit) async {
-    // 1. Bật trạng thái Loading
-    emit(state.copyWith(isBusy: true)); 
+  Future<void> _onCheckForUnfinishedTicket(CheckForUnfinishedTicket event, Emitter<WeighingState> emit) async {
+    if (state.phieuHienTai != null) return;
 
-    try {
-      // 2. Chuẩn hóa dữ liệu đầu vào
-      String finalPlate = state.plate;
-      if (finalPlate == "---" || finalPlate.trim().isEmpty) {
-        finalPlate = "XE_LA"; // Mặc định nếu không có biển số
-      }
-
-      final double grossWeight = double.tryParse(state.weight) ?? 0;
-
-      // 3. Tạo Model Phiếu Cân
-      final phieu = PhieuCanModel(
-        bienSo: finalPlate,
-        khoiLuongTong: grossWeight,
-        khoiLuongBi: 0, // Hiện tại chưa trừ bì
-        khoiLuongHang: grossWeight,
-        thoiGian: DateTime.now().toIso8601String(),
-        khachHang: event.khachHang,
-        loaiHang: event.loaiHang,
-        ghiChu: event.note,
-        nguoiCan: "Admin", // TODO: Lấy từ User Session
-        isSynced: 0 // QUAN TRỌNG: Mặc định là Offline (0)
-      );
-
-      // 4. Gọi Repository (Repository sẽ tự xử lý Offline -> Online)
-      final String result = await _repository.saveTicket(phieu);
-
-      // 5. Tắt Loading và hiển thị kết quả
+    final unfinishedTicket = await _repository.findLatestUnfinishedTicketByPlate(event.plate);
+    if (unfinishedTicket != null) {
       emit(state.copyWith(
-        isBusy: false, 
-        message: result 
-      ));
-    } catch (e) {
-      emit(state.copyWith(
-        isBusy: false, 
-        message: "Lỗi lưu phiếu: $e"
+        phieuHienTai: unfinishedTicket,
+        canTongDone: true, 
+        canBiDone: false,
+        isUpdating: true,
+        message: "Tìm thấy phiếu chờ: ${event.plate}",
       ));
     }
   }
 
-  /// ---------------------------------------------------
-  /// XỬ LÝ ĐỒNG BỘ DỮ LIỆU
-  /// ---------------------------------------------------
-  Future<void> _onSyncData(SyncDataEvent event, Emitter<WeighingState> emit) async {
-    emit(state.copyWith(isBusy: true, message: "Đang đồng bộ dữ liệu..."));
+  Future<void> _onWeighGross(WeighGross event, Emitter<WeighingState> emit) async {
+     if (state.isUpdating) return;
+    emit(state.copyWith(isBusy: true));
+
+    String finalPlate = state.plate.trim();
+    if (finalPlate == "---" || finalPlate.isEmpty) finalPlate = "XE_LA";
     
-    // Gọi hàm syncData (Đã bao gồm cả Up và Down)
-    final String result = await _repository.syncData();
+    final double grossWeight = double.tryParse(state.weight) ?? 0;
+    if (grossWeight <= 0) {
+      emit(state.copyWith(isBusy: false, message: "Lỗi: Khối lượng = 0"));
+      return;
+    }
+
+    final newTicket = PhieuCanModel(
+      bienSo: finalPlate,
+      maCongTyNhap: event.maCongTyNhap, 
+      maCongTyBan: event.maCongTyBan,
+      maLoai: event.maLoai,
+      tlTong: grossWeight,
+      tlBi: 0,
+      tlHang: 0,
+      thoiGianCanTong: DateTime.now().toIso8601String(),
+      nguoiCan: "MobileUser",
+      ghiChu: event.note,
+    );
 
     emit(state.copyWith(
       isBusy: false,
-      message: result, 
+      phieuHienTai: newTicket,
+      canTongDone: true,
+      canBiDone: false,
+      isUpdating: false,
+      message: "Đã chốt cân tổng",
     ));
   }
 
-  /// ---------------------------------------------------
-  /// XỬ LÝ ĐIỀU KHIỂN BARRIER
-  /// ---------------------------------------------------
+  Future<void> _onWeighTare(WeighTare event, Emitter<WeighingState> emit) async {
+    if (state.phieuHienTai == null || !state.canTongDone) return;
+
+    emit(state.copyWith(isBusy: true));
+    final double tareWeight = double.tryParse(state.weight) ?? 0;
+    
+    final updatedTicket = state.phieuHienTai!.copyWith(
+      tlBi: tareWeight,
+      tlHang: (state.phieuHienTai!.tlTong - tareWeight).abs(),
+      thoiGianCanBi: DateTime.now().toIso8601String(),
+    );
+
+    emit(state.copyWith(
+      isBusy: false,
+      phieuHienTai: updatedTicket,
+      canBiDone: true,
+      message: "Đã chốt cân bì",
+    ));
+  }
+
+  Future<void> _onSaveTicket(SaveTicket event, Emitter<WeighingState> emit) async {
+    final currentTicket = state.phieuHienTai;
+    if (currentTicket == null) return;
+
+    emit(state.copyWith(isBusy: true));
+    try {
+      final String result;
+      if (state.isUpdating && currentTicket.id != null) {
+        result = await _repository.updateTicket(currentTicket);
+      } else {
+        result = await _repository.saveTicket(currentTicket);
+      }
+      
+      if (_hubConnection?.state == HubConnectionState.connected) {
+         await _hubConnection?.invoke("NotifyDataChanged");
+         await _hubConnection?.invoke("SendBarrierCommand", args: ["OPEN"]);
+      }
+      
+      emit(WeighingState(
+         weight: state.weight,
+         plate: state.plate,
+         phieuHienTai: null, 
+         message: "Thành công: $result",
+      ));
+      _lastCheckedPlate = ""; 
+    } catch (e) {
+       emit(state.copyWith(isBusy: false, message: "Lỗi lưu: $e"));
+    }
+  }
+
+  void _onClearWeighing(ClearWeighing event, Emitter<WeighingState> emit) {
+    emit(WeighingState(weight: state.weight, plate: state.plate, phieuHienTai: null));
+    _lastCheckedPlate = "";
+  }
+
   Future<void> _onTriggerBarrier(TriggerBarrier event, Emitter<WeighingState> emit) async {
     bool ok = await _repository.openBarrier();
-    emit(state.copyWith(
-      message: ok ? "Đã gửi lệnh mở Barrier" : "Lỗi: Không thể kết nối tới Barrier"
-    ));
+    emit(state.copyWith(message: ok ? "Lệnh mở Barrier đã gửi" : "Lỗi gửi lệnh"));
+  }
+
+  Future<void> _onSyncData(SyncDataEvent event, Emitter<WeighingState> emit) async {
+    emit(state.copyWith(isBusy: true, message: "Đang đồng bộ..."));
+    final String result = await _repository.syncData();
+    emit(state.copyWith(isBusy: false, message: result));
+  }
+
+  Future<void> _onDeletePhieuCan(DeletePhieuCan event, Emitter<WeighingState> emit) async {
+    await _repository.deletePhieuCan(event.id);
+    emit(state.copyWith(message: "Đã xóa phiếu"));
   }
 
   @override
-  Future<void> close() async {
-    await _hubConnection?.stop();
+  Future<void> close() {
+    _hubConnection?.stop();
     return super.close();
   }
 }

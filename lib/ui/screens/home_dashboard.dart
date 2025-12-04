@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../../data/local/database_helper.dart'; // Đảm bảo import đúng đường dẫn
-import 'settings_screen.dart';
-import 'search_screen.dart';
-import 'history_screen.dart'; // Màn hình thống kê/Lịch sử
-import 'weighing_screen.dart'; // LƯU Ý: Đây là file cũ DashboardScreen được đổi tên
+import '../../data/local/database_helper.dart'; 
+import '../../data/services/api_service.dart';
+import '../../data/services/name_cache_service.dart'; // Import mới
 
 class HomeDashboard extends StatefulWidget {
   @override
@@ -12,40 +10,75 @@ class HomeDashboard extends StatefulWidget {
 }
 
 class _HomeDashboardState extends State<HomeDashboard> {
+  final ApiService _apiService = ApiService();
+  
   // Trạng thái bàn cân
   bool _isScale1Active = false;
   String _lastActivity1 = "Chưa có dữ liệu";
-  
-  // Giả lập trạng thái bàn 2 (Vì chưa có logic kết nối bàn 2)
-  bool _isScale2Active = true; 
+  bool _isScale2Active = true; // Giả lập bàn 2 như code gốc
 
   @override
   void initState() {
     super.initState();
+    // 1. Khởi tạo Cache Danh Mục (Logic mới)
+    NameCacheService().initCache();
+    // 2. Kiểm tra trạng thái
     _checkScaleStatus();
   }
 
-  // Logic kiểm tra trạng thái hoạt động dựa trên 15 phút
   Future<void> _checkScaleStatus() async {
-    // Lấy phiếu cân mới nhất từ DB
-    final allPhieu = await DatabaseHelper.instance.getAllPhieuCan();
+    final lastPhieu = await DatabaseHelper.instance.getLatestPhieuCan();
     
-    if (allPhieu.isNotEmpty) {
-      final lastPhieu = allPhieu.first; // Vì query đã orderBy id DESC [cite: 7]
-      final lastTime = DateTime.parse(lastPhieu.thoiGian);
-      final diff = DateTime.now().difference(lastTime).inMinutes;
-
+    if (mounted) {
       setState(() {
-        // Nếu nhỏ hơn 15 phút -> Đang hoạt động
-        _isScale1Active = diff < 15;
-        _lastActivity1 = DateFormat('HH:mm dd/MM').format(lastTime);
-      });
-    } else {
-      setState(() {
-        _isScale1Active = false;
-        _lastActivity1 = "Chưa hoạt động";
+        if (lastPhieu != null) {
+          final displayTime = lastPhieu.thoiGianCanTong ?? lastPhieu.thoiGianCanBi;
+          if (displayTime != null) {
+            try {
+              final lastTime = DateTime.parse(displayTime);
+              final diff = DateTime.now().difference(lastTime).inMinutes;
+              _isScale1Active = diff < 60; // Active nếu < 60p
+              _lastActivity1 = DateFormat('HH:mm dd/MM').format(lastTime);
+            } catch (e) {
+              _lastActivity1 = "Lỗi thời gian";
+            }
+          }
+        } else {
+          _isScale1Active = false;
+          _lastActivity1 = "Chưa hoạt động";
+        }
       });
     }
+  }
+
+  Future<void> _handleBarrierCommand(String command) async {
+    Navigator.of(context).pop(); // Đóng dialog
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đang gửi lệnh $command...")));
+    
+    final bool success = await _apiService.controlBarrier(command);
+    
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(success ? 'Thành công!' : 'Thất bại! Kiểm tra kết nối.'),
+      backgroundColor: success ? Colors.green : Colors.red,
+    ));
+  }
+
+  void _showBarrierControlDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text("Điều Khiển Barrier"),
+          content: Text("Chọn hành động bạn muốn thực hiện:"),
+          actions: <Widget>[
+            TextButton(child: Text("MỞ BARRIER", style: TextStyle(color: Colors.blue)), onPressed: () => _handleBarrierCommand('OPEN')),
+            TextButton(child: Text("ĐÓNG BARRIER", style: TextStyle(color: Colors.orange)), onPressed: () => _handleBarrierCommand('CLOSE')),
+            TextButton(child: Text("HỦY", style: TextStyle(color: Colors.grey)), onPressed: () => Navigator.of(context).pop()),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -53,6 +86,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
+        // Giữ nguyên UI Admin của bạn
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -76,7 +110,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
               Text("TRẠM CÂN & GIÁM SÁT", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue[900])),
               SizedBox(height: 15),
               
-              // === ROW 1: HAI BÀN CÂN ===
+              // ROW 1: HAI BÀN CÂN
               Row(
                 children: [
                   Expanded(
@@ -84,10 +118,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       title: "BÀN CÂN SỐ 01",
                       subtitle: "Hoạt động lần cuối:\n$_lastActivity1",
                       isActive: _isScale1Active,
-                      onTap: () {
-                         // Chuyển sang màn hình cân (Dashboard cũ)
-                         Navigator.push(context, MaterialPageRoute(builder: (_) => WeighingScreen())); // Cần đổi tên file cũ
-                      },
+                      onTap: () => Navigator.pushNamed(context, '/weighing'),
                     ),
                   ),
                   SizedBox(width: 15),
@@ -96,10 +127,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                       title: "BÀN CÂN SỐ 02",
                       subtitle: "Đang hoạt động\nIP: 192.168.1.36",
                       isActive: _isScale2Active,
-                      onTap: () {
-                        // Logic cho bàn 2
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đang kết nối bàn cân 2...")));
-                      },
+                      onTap: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Bàn 2 chưa kết nối API"))),
                     ),
                   ),
                 ],
@@ -109,52 +137,49 @@ class _HomeDashboardState extends State<HomeDashboard> {
               Text("CHỨC NĂNG QUẢN LÝ", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue[900])),
               SizedBox(height: 15),
 
-              // === GRID CÁC CHỨC NĂNG ===
-              // ... Trong home_dashboard.dart
-
-// === GRID CÁC CHỨC NĂNG ===
-GridView.count(
-  shrinkWrap: true,
-  physics: NeverScrollableScrollPhysics(),
-  crossAxisCount: 2,
-  crossAxisSpacing: 15,
-  mainAxisSpacing: 15,
-  // [QUAN TRỌNG] Giảm tỷ lệ xuống 1.0 (vuông) hoặc 0.9 (cao hơn) để đủ chỗ chứa chữ
-  childAspectRatio: 1.0, 
-  children: [
-    _buildFeatureCard(
-      icon: Icons.bar_chart, // Đã sửa lỗi icon directions_truck ở bài trước
-      color: Colors.purple,
-      title: "THỐNG KÊ",
-      desc: "Theo khách hàng,\nloại hàng...", // Xuống dòng chủ động cho đẹp
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => HistoryScreen())),
-    ),
-    _buildFeatureCard(
-      icon: Icons.search,
-      color: Colors.orange,
-      title: "TRA CỨU",
-      desc: "Tìm theo biển số,\nsố phiếu...",
-      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SearchScreen())),
-    ),
-    _buildFeatureCard(
-      icon: Icons.settings,
-      color: Colors.grey,
-      title: "CẤU HÌNH",
-      desc: "API, Camera,\nKết nối mạng",
-      onTap: () async {
-        await Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsScreen()));
-        _checkScaleStatus();
-      },
-    ),
-    _buildFeatureCard(
-      icon: Icons.person_search,
-      color: Colors.teal,
-      title: "NGƯỜI DÙNG",
-      desc: "Quản lý nhân viên,\nphân quyền",
-      onTap: () {},
-    ),
-  ],
-)
+              // GRID MENU (Giữ nguyên GridView của bạn)
+              GridView.count(
+                shrinkWrap: true,
+                physics: NeverScrollableScrollPhysics(),
+                crossAxisCount: 2,
+                crossAxisSpacing: 15,
+                mainAxisSpacing: 15,
+                childAspectRatio: 1.0, // Vuông vắn
+                children: [
+                  _buildFeatureCard(
+                    icon: Icons.bar_chart, 
+                    color: Colors.purple, 
+                    title: "THỐNG KÊ", 
+                    desc: "Theo khách hàng,\nloại hàng...", 
+                    onTap: () => Navigator.pushNamed(context, '/history')
+                  ),
+                  _buildFeatureCard(
+                    icon: Icons.search, 
+                    color: Colors.orange, 
+                    title: "TRA CỨU", 
+                    desc: "Tìm theo biển số,\nsố phiếu...", 
+                    onTap: () => Navigator.pushNamed(context, '/search')
+                  ),
+                  _buildFeatureCard(
+                    icon: Icons.traffic, 
+                    color: Colors.blue, 
+                    title: "ĐIỀU KHIỂN BARRIER", 
+                    desc: "Mở/Đóng khẩn cấp\ntừ xa", 
+                    onTap: _showBarrierControlDialog
+                  ),
+                  _buildFeatureCard(
+                    icon: Icons.settings, 
+                    color: Colors.grey, 
+                    title: "CẤU HÌNH", 
+                    desc: "API, Camera,\nKết nối mạng", 
+                    onTap: () async {
+                      await Navigator.pushNamed(context, '/settings');
+                      _checkScaleStatus();
+                      NameCacheService().initCache(); // Reload cache nếu đổi cấu hình
+                    }
+                  ),
+                ],
+              )
             ],
           ),
         ),
@@ -162,13 +187,7 @@ GridView.count(
     );
   }
 
-  // Widget thẻ trạng thái bàn cân
-  Widget _buildScaleStatusCard({
-    required String title,
-    required String subtitle,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildScaleStatusCard({required String title, required String subtitle, required bool isActive, required VoidCallback onTap}) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -177,9 +196,7 @@ GridView.count(
         borderRadius: BorderRadius.circular(12),
         child: Container(
           padding: EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: isActive ? Colors.green : Colors.red, width: 5)),
-          ),
+          decoration: BoxDecoration(border: Border(left: BorderSide(color: isActive ? Colors.green : Colors.red, width: 5))),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -189,18 +206,8 @@ GridView.count(
                   Icon(Icons.monitor_weight, color: isActive ? Colors.green : Colors.red, size: 30),
                   Container(
                     padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: isActive ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      isActive ? "Active" : "Paused",
-                      style: TextStyle(
-                        color: isActive ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12
-                      ),
-                    ),
+                    decoration: BoxDecoration(color: (isActive ? Colors.green : Colors.red).withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+                    child: Text(isActive ? "Active" : "Paused", style: TextStyle(color: isActive ? Colors.green : Colors.red, fontWeight: FontWeight.bold, fontSize: 12)),
                   )
                 ],
               ),
@@ -215,14 +222,7 @@ GridView.count(
     );
   }
 
-  // Widget thẻ chức năng
-  Widget _buildFeatureCard({
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String desc,
-    required VoidCallback onTap,
-  }) {
+  Widget _buildFeatureCard({required IconData icon, required Color color, required String title, required String desc, required VoidCallback onTap}) {
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -234,11 +234,7 @@ GridView.count(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CircleAvatar(
-                backgroundColor: color.withOpacity(0.1),
-                child: Icon(icon, color: color),
-                radius: 25,
-              ),
+              CircleAvatar(backgroundColor: color.withOpacity(0.1), child: Icon(icon, color: color), radius: 25),
               SizedBox(height: 10),
               Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
               SizedBox(height: 5),
