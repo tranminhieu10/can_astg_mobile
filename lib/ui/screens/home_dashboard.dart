@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 import '../../data/local/database_helper.dart'; 
 import '../../data/services/api_service.dart';
-import '../../data/services/name_cache_service.dart'; // Import mới
+import '../../data/services/name_cache_service.dart';
+import '../../logic/blocs/auth_bloc.dart';
 
 class HomeDashboard extends StatefulWidget {
   @override
@@ -51,6 +53,31 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
+  void _showLogoutConfirmDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text("Đăng xuất"),
+          content: const Text("Bạn có chắc muốn đăng xuất khỏi ứng dụng?"),
+          actions: <Widget>[
+            TextButton(
+              child: const Text("HỦY"),
+              onPressed: () => Navigator.of(context).pop(),
+            ),
+            TextButton(
+              child: const Text("ĐĂNG XUẤT", style: TextStyle(color: Colors.red)),
+              onPressed: () {
+                Navigator.of(context).pop();
+                context.read<AuthBloc>().add(LogoutEvent());
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _handleBarrierCommand(String command) async {
     Navigator.of(context).pop(); // Đóng dialog
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Đang gửi lệnh $command...")));
@@ -86,18 +113,47 @@ class _HomeDashboardState extends State<HomeDashboard> {
     return Scaffold(
       backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        // Giữ nguyên UI Admin của bạn
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("QUẢN LÝ TRẠM CÂN", style: TextStyle(fontWeight: FontWeight.bold)),
-            Text("Admin User", style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
-          ],
+        title: BlocBuilder<AuthBloc, AuthState>(
+          builder: (context, authState) {
+            final userName = authState.userName ?? 'Admin User';
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("QUẢN LÝ TRẠM CÂN", style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(userName, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
+              ],
+            );
+          },
         ),
         actions: [
-          IconButton(icon: Icon(Icons.notifications), onPressed: () {}),
-          CircleAvatar(child: Text("AD"), backgroundColor: Colors.white, radius: 18),
-          SizedBox(width: 10),
+          IconButton(icon: const Icon(Icons.notifications), onPressed: () {}),
+          PopupMenuButton<String>(
+            icon: const CircleAvatar(child: Text("AD"), backgroundColor: Colors.white, radius: 18),
+            onSelected: (value) {
+              if (value == 'logout') {
+                _showLogoutConfirmDialog();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'profile',
+                child: ListTile(
+                  leading: Icon(Icons.person_outline),
+                  title: Text('Thông tin cá nhân'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: ListTile(
+                  leading: Icon(Icons.logout, color: Colors.red),
+                  title: Text('Đăng xuất', style: TextStyle(color: Colors.red)),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 10),
         ],
       ),
       body: RefreshIndicator(

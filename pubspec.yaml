@@ -45,6 +45,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  
+  assets:
+    - assets/images/
 
 # Fix xung đột dependency của SignalR
 dependency_overrides:
